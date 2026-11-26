@@ -62,3 +62,45 @@ jobs:
           path: build/Android/**/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Notify DingTalk
+        if: always()
+        continue-on-error: true
+        env:
+          DING_TOKEN: ${{ secrets.DINGTALK_TOKEN }}
+          DING_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, hmac, json, os, time, urllib.parse, urllib.request
+
+          token = os.environ.get("DING_TOKEN", "")
+          secret = os.environ.get("DING_SECRET", "")
+          if not token:
+              print("DINGTALK_TOKEN 未配置，跳过通知")
+              raise SystemExit(0)
+
+          ts = str(round(time.time() * 1000))
+          query = f"access_token={token}&timestamp={ts}"
+          if secret:
+              sign = base64.b64encode(
+                  hmac.new(secret.encode(), f"{ts}\n{secret}".encode(), hashlib.sha256).digest()
+              ).decode()
+              query += "&sign=" + urllib.parse.quote_plus(sign)
+
+          status_map = {"success": "成功", "failure": "失败", "cancelled": "已取消"}
+          status = os.environ.get("JOB_STATUS", "unknown")
+          text = (
+              f"### UnityBuild 构建 {status_map.get(status, status)}\n\n"
+              f"- 仓库：{os.environ.get('GITHUB_REPOSITORY')}\n"
+              f"- 分支：{os.environ.get('GITHUB_REF_NAME')}\n"
+              f"- 提交：{os.environ.get('GITHUB_SHA', '')[:7]}\n"
+              f"- [查看运行详情]({os.environ.get('GITHUB_SERVER_URL')}/{os.environ.get('GITHUB_REPOSITORY')}"
+              f"/actions/runs/{os.environ.get('GITHUB_RUN_ID')})\n"
+          )
+          body = json.dumps({"msgtype": "markdown", "markdown": {"title": "UnityBuild", "text": text}},
+                            ensure_ascii=False).encode()
+          req = urllib.request.Request(
+              f"https://oapi.dingtalk.com/robot/send?{query}", body, {"Content-Type": "application/json"})
+          print(urllib.request.urlopen(req, timeout=15).read().decode())
+          PY
