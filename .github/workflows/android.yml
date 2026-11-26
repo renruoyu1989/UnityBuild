@@ -65,20 +65,20 @@ jobs:
 
       - name: Notify DingTalk
         if: always()
-        continue-on-error: true
         env:
           DING_TOKEN: ${{ secrets.DINGTALK_TOKEN }}
           DING_SECRET: ${{ secrets.DINGTALK_SECRET }}
           JOB_STATUS: ${{ job.status }}
         run: |
           python3 - <<'PY'
-          import base64, hashlib, hmac, json, os, time, urllib.parse, urllib.request
+          import base64, hashlib, hmac, json, os, time, urllib.error, urllib.parse, urllib.request
 
-          token = os.environ.get("DING_TOKEN", "")
-          secret = os.environ.get("DING_SECRET", "")
+          token = os.environ.get("DING_TOKEN", "").strip()
+          secret = os.environ.get("DING_SECRET", "").strip()
+          print(f"[notify] token_length={len(token)} secret={'set' if secret else 'empty'}")
           if not token:
-              print("DINGTALK_TOKEN 未配置，跳过通知")
-              raise SystemExit(0)
+              print("[notify] DINGTALK_TOKEN 为空：请确认 Repository secrets 里存在同名 secret")
+              raise SystemExit(1)
 
           ts = str(round(time.time() * 1000))
           query = f"access_token={token}&timestamp={ts}"
@@ -102,5 +102,17 @@ jobs:
                             ensure_ascii=False).encode()
           req = urllib.request.Request(
               f"https://oapi.dingtalk.com/robot/send?{query}", body, {"Content-Type": "application/json"})
-          print(urllib.request.urlopen(req, timeout=15).read().decode())
+
+          try:
+              raw = urllib.request.urlopen(req, timeout=15).read().decode()
+          except urllib.error.HTTPError as e:
+              raw = e.read().decode(errors="replace")
+              print(f"[notify] HTTP {e.code}: {raw}")
+              raise SystemExit(1)
+
+          print(f"[notify] response: {raw}")
+          if json.loads(raw).get("errcode") != 0:
+              print("[notify] 钉钉返回非 0 errcode，消息未送达，见上面的 errmsg")
+              raise SystemExit(1)
+          print("[notify] 发送成功")
           PY
